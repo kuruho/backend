@@ -9,6 +9,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "lodash": "^4.17.4",
     "socket.io": "^1.7.3",
     "socket.io-client": "^1.7.3"
   }
