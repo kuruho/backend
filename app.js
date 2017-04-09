@@ -34,7 +34,7 @@ function Poll() {
     this.registerVote = function(vote)
     {
         this.votes[vote.userid] = vote.uri;
-        console.log(this.votes);
+        console.log("Got vote for: " + JSON.stringify(vote));
     }
 
     this.refreshSongs = function()
@@ -61,6 +61,14 @@ function Poll() {
             this.current_song_seek = seek;
             // Reset the status of the poll
             this.expired = false;
+        }
+
+        // This is necessary for the first attempt, when we have no winners
+        if (this.results == undefined && songUri != undefined)
+        {
+            this.results = _.find(this.songs, function(o) { return o.uri == songUri; });
+            this.results.color = config.server.colors[0];
+            this.sendResult();
         }
     }
 
@@ -95,7 +103,7 @@ function Poll() {
             else
             {
                 // Pick the winning song
-                this.results = _.find(this.songs_in_poll, function(o) { return o.uri == winning_song_uri });
+                this.results = _.find(this.songs_in_poll, function(o) { return o.uri == winning_song_uri[0]; });
             }
             console.log('We have a winner: ' + JSON.stringify(this.results));
 
@@ -120,12 +128,12 @@ function Poll() {
         if (sock == undefined)
         {
             // To all
-            io.emit('app:state', this.results);
+            io.emit('app:state', { data: this.results });
         }
         else
         {
             // To single user
-            sock.emit('app:state', this.results);
+            sock.emit('app:state', { data: this.results });
         }
     }
 
@@ -140,7 +148,6 @@ function Poll() {
         this.songs_in_poll = _.forEach(songs_in_poll, function(o) { return o['color'] = config.server.colors[index++]; });
         // Send songs to everyone
         this.sendCurrentPoll();
-
     }
 
     // Send the poll to all clients
@@ -151,12 +158,12 @@ function Poll() {
             if (sock == undefined)
             {
                 // To all
-                io.emit('app:songlist', this.songs_in_poll);
+                io.emit('app:songlist', { data: this.songs_in_poll});
             }
             else
             {
                 // To single user
-                sock.emit('app:songlist', this.songs_in_poll);
+                sock.emit('app:songlist', { data: this.songs_in_poll});
             }
         }
     }
@@ -177,7 +184,7 @@ app.get('/', function(req, res){
 io.on('connection', function (socket) {
 
     socket.on('app:ready', function() {
-        console.log('received');
+        console.log('One app is ready!');
         poll.sendCurrentPoll(socket);
         poll.sendResult(socket);
     });
@@ -188,7 +195,7 @@ io.on('connection', function (socket) {
     });
 
     socket.on('disconnect', function () {
-        io.emit('User disconnected');
+        console.log('One app disconnected!');
     });
 });
 
@@ -205,9 +212,7 @@ volumio.on('connect', function(){
         volumio.emit('getState', '');
     }, config.volumio.status_interval_ms);
 
-    var songs = undefined;
 
-    // Prepare a pool of songs and an empty played songs
     volumio.on('pushBrowseLibrary', function(data) {
         console.log('BrowseList returned: ' + JSON.stringify(data));
         console.log(JSON.stringify('Songs in poll: ' + JSON.stringify(poll.songs_in_poll)));
@@ -225,11 +230,14 @@ volumio.on('connect', function(){
 
     });
 
-    // TO TEST
+    // This should allow to support songs to be added dynamically to the Pool playlist, but
+    // given the fact pushBrowseLibrary has no playlist name, it is
+    // dangerous to use it, because any change on another playlist could overwrite my songs in our playlist of interest
     // volumio.on('pushAddToPlaylist', function(data) {
     //     poll.refreshSongs();
     // });
 
+    // Prepare a pool of songs and an empty played songs
     if(init) {
         volumio.emit('createPlaylist', {name: config.volumio.pool_playlist_name});
         volumio.emit('createPlaylist', {name:config.volumio.played_playlist_name});
