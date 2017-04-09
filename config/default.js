@@ -1,6 +1,8 @@
 module.exports = {
     server: {
-        port: 3000
+        port: 3000,
+        songs_per_poll: 5,
+        colors: ['#1557FE','#B808FE','#CEFF00','#00FEE3','#F1C800','#F1C800','#F11200','#2800A6']
     },
     volumio: {
         status_interval_ms: 2000,
