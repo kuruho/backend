@@ -141,17 +141,13 @@ io.on('connection', function (socket) {
 
     poll.sendCurrentPoll(socket);
 
-    socket.on('state', function (from, msg) {
-        console.log('I received a private message by ', from, ' saying ', msg);
-    });
-
     socket.on('app:vote', function(vote) {
         console.log('Received vote: ' + vote);
         poll.registerVote(vote);
     });
 
     socket.on('disconnect', function () {
-        io.emit('user disconnected');
+        io.emit('User disconnected');
     });
 });
 
