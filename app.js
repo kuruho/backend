@@ -24,13 +24,23 @@ function Poll() {
     // Array of objects which represent songs choosen for the current poll
     this.songs_in_poll = undefined;
 
+    // Uri of the current song
     this.current_song_uri = undefined;
+    this.current_song_seek = undefined;
+
+    this.results = undefined;
 
     // Register a vote, being a vote an object with userid and uri
     this.registerVote = function(vote)
     {
-        this.votes[vote.userid] = vote.uri
+        this.votes[vote.userid] = vote.uri;
         console.log(this.votes);
+    }
+
+    this.refreshSongs = function()
+    {
+        // Get library content
+        volumio.emit('browseLibrary', {uri: "playlists/" + config.volumio.pool_playlist_name}); //, prevUri: "playlists"
     }
 
     // Set the list of songs available
@@ -43,13 +53,14 @@ function Poll() {
         }
     }
 
-    this.setCurrentSongUri = function(songUri)
+    this.setCurrentSongUri = function(songUri, seek)
     {
-        if (this.current_song_uri != songUri)
+        if (this.current_song_uri != songUri || this.current_song_seek > seek)
         {
             this.current_song_uri = songUri;
+            this.current_song_seek = seek;
+            // Reset the status of the poll
             this.expired = false;
-            console.log('We can start the countdown!');
         }
     }
 
@@ -64,14 +75,15 @@ function Poll() {
                 result[key] = (result[key] || 0) + 1;
                 return result;
             }, {});
-            console.log('Final results: ' + final_results);
+            console.log('Final results: ' + JSON.stringify(final_results));
             var winning_song_uri = _.maxBy(_.toPairs(final_results), function (o) {
                 return o[1];
             });
-            console.log('Winning song uri: ' + winning_song_uri);
 
             // Clear votes
             this.votes = {};
+
+            console.log('Winning song uri: ' + winning_song_uri);
 
             // Set results, enrich with meta
             if (winning_song_uri == undefined && !_.isEmpty(this.songs_in_poll)) {
@@ -88,18 +100,33 @@ function Poll() {
             console.log('We have a winner: ' + JSON.stringify(this.results));
 
             // Enqueue uri to played and remove from pool
-            volumio.emit('addToPlaylist', {name: config.volumio.played_playlist_name, uri: winning_song_uri});
-            volumio.emit('removeFromPlaylist', {name: config.volumio.pool_playlist_name, uri: winning_song_uri});
+            volumio.emit('addToQueue',{uri:this.results.uri, title:this.results.title, service:this.results.service});
+            volumio.emit('removeFromPlaylist', {name: config.volumio.pool_playlist_name, uri: this.results.uri, service: this.results.service});
+            volumio.emit('addToPlaylist', {name: config.volumio.played_playlist_name, uri: this.results.uri, service: this.results.service});
+
+            this.refreshSongs();
 
             // Send results
             this.sendResult();
+
+            // Generate a new poll
+            this.generatePoll();
         }
     }
 
     // Send the results to all clients
-    this.sendResult = function()
+    this.sendResult = function(sock)
     {
-        io.emit('app::result', this.results);
+        if (sock == undefined)
+        {
+            // To all
+            io.emit('app:state', this.results);
+        }
+        else
+        {
+            // To single user
+            sock.emit('app:state', this.results);
+        }
     }
 
     // Generate a new poll
@@ -111,23 +138,33 @@ function Poll() {
         var index = 0;
         // Assign a color to each song
         this.songs_in_poll = _.forEach(songs_in_poll, function(o) { return o['color'] = config.server.colors[index++]; });
-
         // Send songs to everyone
         this.sendCurrentPoll();
 
     }
 
     // Send the poll to all clients
-    this.sendCurrentPoll = function()
+    this.sendCurrentPoll = function(sock)
     {
         if (this.songs_in_poll != undefined)
         {
-            io.emit('app:poll', this.songs_in_poll);
+            if (sock == undefined)
+            {
+                // To all
+                io.emit('app:songlist', this.songs_in_poll);
+            }
+            else
+            {
+                // To single user
+                sock.emit('app:songlist', this.songs_in_poll);
+            }
         }
     }
 }
 
 var poll = new Poll();
+
+var init = true;
 
 // HTTP ENDPOINTS
 
@@ -139,7 +176,11 @@ app.get('/', function(req, res){
 
 io.on('connection', function (socket) {
 
-    poll.sendCurrentPoll(socket);
+    socket.on('app:ready', function() {
+        console.log('received');
+        poll.sendCurrentPoll(socket);
+        poll.sendResult(socket);
+    });
 
     socket.on('app:vote', function(vote) {
         console.log('Received vote: ' + vote);
@@ -167,39 +208,49 @@ volumio.on('connect', function(){
     var songs = undefined;
 
     // Prepare a pool of songs and an empty played songs
-    volumio.emit('createPlaylist', {name: config.volumio.pool_playlist_name});
-    volumio.emit('deletePlaylist', {name: config.volumio.played_playlist_name});
     volumio.on('pushBrowseLibrary', function(data) {
-        volumio.emit('createPlaylist', {name:config.volumio.played_playlist_name});
-
+        console.log('BrowseList returned: ' + JSON.stringify(data));
+        console.log(JSON.stringify('Songs in poll: ' + JSON.stringify(poll.songs_in_poll)));
         // Extract songs from our playlist and update the pool
         //"navigation":{"lists":[{"availableListViews":["list"],"items":[{"service":"mpd","type":"song"...
         var navigationList = data.navigation.lists[0];
-        var songs = _.filter(navigationList.items, function(o) { return o.type == 'song'});
+        var songs = _.filter(navigationList.items, function(o) { return o.type == 'song' });
         if (!_.isEmpty(songs))
         {
             poll.setSongs(songs);
-            console.log(songs);
+            if (poll.expired || poll.results == undefined) {
+                poll.generatePoll();
+            }
         }
 
     });
 
-    // Get library content
-    volumio.emit('browseLibrary', {uri: "playlists/" + config.volumio.pool_playlist_name}); //, prevUri: "playlists"
+    // TO TEST
+    // volumio.on('pushAddToPlaylist', function(data) {
+    //     poll.refreshSongs();
+    // });
+
+    if(init) {
+        volumio.emit('createPlaylist', {name: config.volumio.pool_playlist_name});
+        volumio.emit('createPlaylist', {name:config.volumio.played_playlist_name});
+        poll.refreshSongs();
+        init = false;
+    }
 
     // Volumio state retrieved
     volumio.on('pushState',function(data)
     {
+        poll.setCurrentSongUri(data.uri, data.seek);
         if (data.status === 'play') {
-            currentSongUri = data.uri;
             timeToEnd = data.duration - (data.seek/1000.0);
-            console.log(currentSongUri);
-            console.log(timeToEnd);
-            poll.setCurrentSongUri(currentSongUri);
-            if (timeToEnd < config.volumio.remaining_time_to_terminate_s) {
+            console.log('Current song uri: ' + poll.current_song_uri);
+            console.log('Time to end: ' + timeToEnd);
+            console.log('Complete song list: ' + JSON.stringify(poll.songs));
+            console.log('Current songs in poll: ' + JSON.stringify(poll.songs_in_poll));
+            console.log('Last winning song: ' + JSON.stringify(poll.results));
+            if (!poll.expired && timeToEnd < config.volumio.remaining_time_to_terminate_s) {
                 poll.generateResults();
             }
-            //             volumio.emit('playPlaylist', {name:config.volumio.played_playlist_name});
         }
     });
 
