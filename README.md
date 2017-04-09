@@ -46,8 +46,17 @@ You can just run the following command
 You can run the following command
 
 ```
-NODE_ENV=<yourenv> node app.js
+# Development
+node app.js
+
+# Production
+NODE_ENV=production
+VOLUMIO_WS=ws://hostname
+SERVER_PORT=80
+node app.js
 ```
+
+
 
 If ```NODE_ENV``` is not specified, development will be taken into account.
 Ensure the environment is present under the ```config``` folder. Defaults are in ```default.js```.
