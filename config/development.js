@@ -1,5 +1,5 @@
 module.exports = {
     volumio: {
-        ws: 'ws://192.168.1.83'
+        ws: 'ws://192.168.40.104'
     }
 }

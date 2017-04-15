@@ -11,6 +11,13 @@ var EventEmitter = require('events')
 
 // BUSINESS
 
+function convertItem(item) {
+    item['author'] = item['artist']
+    item['id'] = item['uri']
+    item['title'] = item.title.replace('_', ' ').replace('.mp3','')
+    return item
+}
+
 function Poll() {
 
     this.expired = false;
@@ -33,7 +40,7 @@ function Poll() {
     // Register a vote, being a vote an object with userid and uri
     this.registerVote = function(vote)
     {
-        this.votes[vote.userid] = vote.uri;
+        this.votes[vote.user_id] = vote.uri;
         console.log("Got vote for: " + JSON.stringify(vote));
     }
 
@@ -66,7 +73,14 @@ function Poll() {
         // This is necessary for the first attempt, when we have no winners
         if (this.results == undefined && songUri != undefined)
         {
+            console.log(songUri);
             this.results = _.find(this.songs, function(o) { return o.uri == songUri; });
+            console.log(JSON.stringify(this.songs));
+            console.log(JSON.stringify(this.results));
+            if(this.results == undefined && this.songs == undefined)
+            {
+                this.results = { title: 'Loading', author: '', id: 'none'};
+            }
             this.results.color = config.server.colors[0];
             this.sendResult();
         }
@@ -145,7 +159,13 @@ function Poll() {
         console.log('Selected songs in current poll: ' + JSON.stringify(songs_in_poll));
         var index = 0;
         // Assign a color to each song
-        this.songs_in_poll = _.forEach(songs_in_poll, function(o) { return o['color'] = config.server.colors[index++]; });
+        console.log(config.server.colors);
+        for(var index = 0; index < songs_in_poll.length; index++)
+        {
+            songs_in_poll[index].color = config.server.colors[index];
+            console.log('Color: ' + songs_in_poll[index].color);
+        }
+        this.songs_in_poll = songs_in_poll
         // Send songs to everyone
         this.sendCurrentPoll();
     }
@@ -190,7 +210,7 @@ io.on('connection', function (socket) {
     });
 
     socket.on('app:vote', function(vote) {
-        console.log('Received vote: ' + vote);
+        console.log('Received vote: ' + JSON.stringify(vote));
         poll.registerVote(vote);
     });
 
@@ -216,10 +236,17 @@ volumio.on('connect', function(){
     volumio.on('pushBrowseLibrary', function(data) {
         console.log('BrowseList returned: ' + JSON.stringify(data));
         console.log(JSON.stringify('Songs in poll: ' + JSON.stringify(poll.songs_in_poll)));
+        if(poll.results != undefined)
+        {
+            this.sendResult()
+        }
         // Extract songs from our playlist and update the pool
         //"navigation":{"lists":[{"availableListViews":["list"],"items":[{"service":"mpd","type":"song"...
         var navigationList = data.navigation.lists[0];
         var songs = _.filter(navigationList.items, function(o) { return o.type == 'song' });
+        console.log(JSON.stringify(songs))
+        var songs = _.map(songs, convertItem);
+        console.log(JSON.stringify(songs));
         if (!_.isEmpty(songs))
         {
             poll.setSongs(songs);
